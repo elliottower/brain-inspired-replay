@@ -211,6 +211,16 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                     utils.checkattr(previous_generator, 'dg_gates')
                 ) else False
 
+                # TREVOR'S CODE
+                # Use the previous model to score the images from this new task
+                with torch.no_grad():
+                    curTaskID = task-2
+                    newScores = previous_model.classify(x, not_hidden=False if Generative else True)
+                    newScores = newScores[:, :(classes_per_task*(curTaskID+1))]
+                    _, newHardScores = torch.max(newScores, dim=1)
+                    print("newScores dim: %s\n\nnewScores max: %s\n\ncur y: %s\n\n\n" % (str(newScores.shape), str(newHardScores), str(y)))
+
+
                 # Sample [x_]
                 if conditional_gen and scenario=="task":
                     # -if a conditional generator is used with task-IL scenario, generate data per previous task
