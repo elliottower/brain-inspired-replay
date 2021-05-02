@@ -60,7 +60,8 @@ def train(model, train_loader, iters, loss_cbs=list(), eval_cbs=list(), save_eve
 
 def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=None, classes_per_task=None,
              iters=2000, batch_size=32, batch_size_replay=None, loss_cbs=list(), eval_cbs=list(), sample_cbs=list(),
-             generator=None, gen_iters=0, gen_loss_cbs=list(), feedback=False, reinit=False, args=None, only_last=False):
+             generator=None, gen_iters=0, gen_loss_cbs=list(), feedback=False, reinit=False, args=None, only_last=False,
+             uniform_sample_curation=False):
     '''Train a model (with a "train_a_batch" method) on multiple tasks, with replay-strategy specified by [replay_mode].
 
     [model]             <nn.Module> main model to optimize across all tasks
@@ -211,14 +212,18 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                     utils.checkattr(previous_generator, 'dg_gates')
                 ) else False
 
-                # TREVOR'S CODE
+
+                # TREVOR'S CODE - SOFTMAX REPLAY
                 # Use the previous model to score the images from this new task
                 with torch.no_grad():
                     curTaskID = task-2
-                    newScores = previous_model.classify(x, not_hidden=False if Generative else True)
-                    newScores = newScores[:, :(classes_per_task*(curTaskID+1))]
-                    _, newHardScores = torch.max(newScores, dim=1)
-                    print("newScores dim: %s\n\nnewScores max: %s\n\ncur y: %s\n\n\n" % (str(newScores.shape), str(newHardScores), str(y)))
+                    newScores_og = previous_model.classify(previous_model.input_to_hidden(x), not_hidden=False if Generative else True)
+                    newScores = newScores_og[:, :(classes_per_task*(curTaskID+1))]
+                    softmax = torch.nn.Softmax(dim=1)
+                    newHardScores = softmax(newScores)
+                    avgError = torch.mean(newHardScores, dim=0)
+                    sampleProbs = torch.zeros(newScores_og.shape[1])
+                    sampleProbs[:(classes_per_task*(curTaskID+1))] = avgError[:(classes_per_task*(curTaskID+1))]
 
 
                 # Sample [x_]
@@ -239,12 +244,28 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                     # -which tasks/domains are allowed to be generated? (only relevant if "Domain-IL" with task-gates)
                     allowed_domains = list(range(task-1))
                     # -generate inputs representative of previous tasks
-                    x_temp_ = previous_generator.sample(
-                        batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
-                        only_x=False,
-                    )
-                    x_ = x_temp_[0]
-                    task_used = x_temp_[2]
+                    if (not uniform_sample_curation): 
+	                    x_temp_ = previous_generator.sample(
+	                        batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+	                        only_x=False, class_probs=sampleProbs, uniform_sampling=True) # CHANGE SAMPLING METHOD HERE
+	                    x_ = x_temp_[0]
+	                    task_used = x_temp_[2]
+                    else:
+                    	# Here, do whatever you'd want to do for Uniform Sample Curation
+                        pass
+
+
+
+                # TREVOR'S CODE - UNIFORM SAMPLE CURATION 
+                # The following code (and some of the above code, where the x_ is being generated) is a basis for how
+                # to train a model. We want to copy the current model, and then run through training 
+
+                # loss_dict = model.train_a_batch(x, y=y, x_=x_, y_=y_, scores_=scores_,
+                #                                 tasks_=task_used, active_classes=active_classes, task=task, rnt=(
+                #                                     1. if task==1 else 1./task
+                #                                 ) if rnt is None else rnt, freeze_convE=freeze_convE,
+                #                                 replay_not_hidden=False if Generative else True)
+
 
             #--------------------------------------------OUTPUTS----------------------------------------------------#
 
@@ -302,6 +323,12 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                                     1. if task==1 else 1./task
                                                 ) if rnt is None else rnt, freeze_convE=freeze_convE,
                                                 replay_not_hidden=False if Generative else True)
+
+
+                # UNIFORM SAMPLE CURATION: loss_dict has a "predL_r" key that contains the individual prediction
+                # losses 
+
+
 
                 # Update running parameter importance estimates in W
                 if isinstance(model, ContinualLearner) and model.si_c>0:

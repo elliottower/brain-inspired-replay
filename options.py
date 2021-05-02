@@ -295,6 +295,7 @@ def set_defaults(args, only_MNIST=False, single_task=False, generative=True, com
         args.tasks= (
             5 if args.experiment=='splitMNIST' else (10 if args.experiment=="CIFAR100" else 100)
         ) if args.tasks is None else args.tasks
+        # ITERATION COUNT 
         args.iters = (5000 if args.experiment=='CIFAR100' else 2000) if args.iters is None else args.iters
         args.lr = (0.001 if args.experiment=='splitMNIST' else 0.0001) if args.lr is None else args.lr
         args.batch = (128 if args.experiment=='splitMNIST' else 256) if args.batch is None else args.batch

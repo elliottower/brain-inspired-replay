@@ -224,6 +224,7 @@ class AutoEncoder(ContinualLearner):
     def classify(self, x, not_hidden=False, reparameterize=True, **kwargs):
         '''For input [x] (image or extracted "internal" image features), return all predicted "scores"/"logits".'''
         if hasattr(self, "classifier"):
+            # original
             image_features = self.flatten(x) if (self.hidden and not not_hidden) else self.flatten(self.convE(x))
             hE = self.fcE(image_features)
             if self.classify_opt=="beforeZ":
@@ -307,7 +308,7 @@ class AutoEncoder(ContinualLearner):
     ##------ SAMPLE FUNCTIONS --------##
 
     def sample(self, size, allowed_classes=None, class_probs=None, sample_mode=None, allowed_domains=None,
-               only_x=False, **kwargs):
+               only_x=False, uniform_sampling=False, **kwargs):
         '''Generate [size] samples from the model. Outputs are tensors (not "requiring grad"), on same device as <self>.
 
         INPUT:  - [allowed_classes]     <list> of [class_ids] from which to sample
@@ -315,6 +316,7 @@ class AutoEncoder(ContinualLearner):
                 - [sample_mode]         <int> to sample from specific mode of [z]-distr'n, overwrites [allowed_classes]
                 - [allowed_domains]     <list> of [task_ids] which are allowed to be used for 'task-gates' (if used)
                                           NOTE: currently only relevant if [scenario]=="domain"
+                - [uniform_sampling]    <bool> If true, this will force an even distribution of the allowed classes
 
         OUTPUT: - [X]         <4D-tensor> generated images / image-features
                 - [y_used]    <ndarray> labels of classes intended to be sampled  (using <class_ids>)
@@ -352,6 +354,12 @@ class AutoEncoder(ContinualLearner):
                 y_used = np.repeat(int(sample_mode / self.modes_per_class), size) if self.per_class else None
         else:
             y_used = None
+
+        # Re-setting y_used if "uniform sampling" is turned on; could change to increase efficiency (need to analyze
+        # the above conditional to know if anything else important is set in it) 
+        print((y_used))
+        if (uniform_sampling):
+            y_used = np.arange(size) % len(allowed_classes)
 
         # sample z
         if self.prior=="GMM":
@@ -789,6 +797,7 @@ class AutoEncoder(ContinualLearner):
 
 
         ##--(2)-- REPLAYED DATA --##
+        predL_r = None
         if x_ is not None:
             # In the Task-IL scenario, [y_] or [scores_] is a list and [x_] needs to be evaluated on each of them
             TaskIL = (type(y_)==list) if (y_ is not None) else (type(scores_)==list)
@@ -863,6 +872,8 @@ class AutoEncoder(ContinualLearner):
                         active_classes is None or y_hat_all is None
                 ) else y_hat_all[:, active_classes[replay_id]]
 
+
+                # USE PREDL_R FOR UNIFORM SAMPLE CURATION 
                 # Calculate all losses
                 reconL_r[replay_id],variatL_r[replay_id],predL_r[replay_id],distilL_r[replay_id] = self.loss_function(
                     x=x_temp_, y=y_[replay_id] if (y_ is not None) else None, x_recon=recon_batch, y_hat=y_hat,
@@ -908,6 +919,7 @@ class AutoEncoder(ContinualLearner):
 
 
         # Return the dictionary with different training-loss split in categories
+
         return {
             'loss_total': loss_total.item(), 'precision': precision,
             'recon': reconL.item() if x is not None else 0,
@@ -917,5 +929,5 @@ class AutoEncoder(ContinualLearner):
             'variat_r': sum(variatL_r).item()/n_replays if x_ is not None else 0,
             'pred_r': sum(predL_r).item()/n_replays if x_ is not None else 0,
             'distil_r': sum(distilL_r).item()/n_replays if x_ is not None else 0,
-            'ewc': ewc_loss.item(), 'si_loss': surrogate_loss.item(),
+            'ewc': ewc_loss.item(), 'si_loss': surrogate_loss.item(), 'predL_r': predL_r,
         }

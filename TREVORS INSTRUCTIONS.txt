@@ -1,0 +1,20 @@
+train_cl( ) in train is where you can change the way that the sampling strategy works. 
+
+SOFTMAX SAMPLING: On lines 218-226, it's setting up Softmax sampling by calculating "sampleProbs", which is then used further down in the code when we call previous_generator.sample( ) - line 248. 
+
+
+UNIFORM SAMPLING: Also on line 248: if we change the uniform_sampling variable to be True, then it'll distribute the classes equally. This overrides class_probs, so you don't need to worry about changing that. 
+
+
+UNIFORM RANDOM SAMPLING: For this, you'd just want to change line 248 to: 
+- Remove the class_probs areguement
+- Turn uniform_sampling to False
+In lieu of these parameters, the sample( ) function will default to a uniform random selection of samples. 
+
+UNIFORM SAMPLE CURATION: I didn't actually implement this one all the way, but that may be a good thing re: your texts this morning. On line 254, you'd want to continue the if statement to include the generation of MORE samples than you needed - copy the above conditional, but change the batch_size_replay. Then, we'd perform whatever method necessary to test those samples. 
+
+
+=====
+Changing number of iterations: go to options.py, and search for "ITERATION COUNT" - I left a comment above the line that sets the default iteration count. Now... I'm sure I could have done that within the flags for running the program, but I guess I want to make things harder for myself. The default iter count is 5000 for CIFAR 100, 2000 for MNIST; for testing that your code is actually running correctly, you could turn MNIST down to like, 10. 
+
+
