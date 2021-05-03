@@ -77,7 +77,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
     [feedback]          <bool>, if True and [replay_mode]="generative", the main model is used for generating replay
     [only_last]         <bool>, only train on final task / episode
     [*_cbs]             <list> of call-back functions to evaluate training-progress
-    [sample_method]     <str> indicating the sample method, choices: 'random', 'uniform', 'curated', 'softmax'
+    [sample_method]     <str> indicating the sample method, choices: 'random', 'uniform', 'curated', 'softmax', 'interfered'
     [curated_multiplier]<int> choose curated samples out of size curated_multiplier * mutiply batch_size_replay
 
     '''
@@ -245,30 +245,33 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                                                    not_hidden=False if Generative else True)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))]
                             softmax = torch.nn.Softmax(dim=1)
-                            newHardScores = softmax(newScores)
+                            newHardScores = nn.Softmax(dim=1)(newScores)
                             avgError = torch.mean(newHardScores, dim=0)
                             sampleProbs = torch.zeros(newScores_og.shape[1])
                             sampleProbs[:(classes_per_task * (curTaskID + 1))] = avgError[
                                                                                  :(classes_per_task * (curTaskID + 1))]
-                        x_, _, task_used = previous_generator.sample(
+                        x_, y_used, task_used = previous_generator.sample(
                             batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
                             only_x=False, class_probs=sampleProbs,uniform_sampling=False)
+                        # print("y_used: ", torch.unique(torch.tensor(y_used), return_counts=True))
                     # --- Uniformly random sampling (baseline) ---
                     if sample_method == 'random':
-                        x_, _, task_used = previous_generator.sample(
+                        x_, y_used, task_used = previous_generator.sample(
                             batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
                             only_x=False, class_probs=None, uniform_sampling=False)
+                        # print("y_used: ", torch.unique(torch.tensor(y_used), return_counts=True))
                     # --- Uniform sampling: balanced numbers of samples from each class ---
                     elif sample_method == 'uniform':
-                        x_, _, task_used = previous_generator.sample(
+                        x_, y_used, task_used = previous_generator.sample(
 	                        batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
 	                        only_x=False, class_probs=None, uniform_sampling=True)
+                        # print("y_used: ", torch.unique(torch.tensor(y_used), return_counts=True))
                     # --- Uniform sample curation: pick the best samples to show (by some metric), balance uniformly ---
                     else:
                         # Generate x times as many samples as we need to then pick the best of
                         x_, y_used, task_used = previous_generator.sample(
                             batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
-                            only_x=False, class_probs=None, uniform_sampling=True)
+                            only_x=False, class_probs=None, uniform_sampling=False)
 
                         # --- Measure the performance of each of these samples on the current model ---
                         # Use the previous model to score the generated images (code taken from Trevor's softmax above)
@@ -277,8 +280,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             newScores_og = model.classify(model.input_to_hidden(x_),
                                                                    not_hidden=False if Generative else True)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
-                            softmax = torch.nn.Softmax(dim=1)
-                            newHardScores = softmax(newScores) # Makes the scores sum to 1 (probabilities)
+                            newHardScores = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
                             cross_entropy = nn.CrossEntropyLoss(reduction='none')
                             cross_entropy_loss = cross_entropy(newHardScores, torch.tensor(y_used))
 
@@ -298,18 +300,24 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             newScores_og = model_tmp.classify(model_tmp.input_to_hidden(x_),
                                                                    not_hidden=False if Generative else True)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
-                            softmax = torch.nn.Softmax(dim=1)
-                            newHardScores2 = softmax(newScores) # Makes the scores sum to 1 (probabilities)
+                            newHardScores2 = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
                             cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
                             cross_entropy_loss2 = cross_entropy(newHardScores2, torch.tensor(y_used))
 
                             # Amount that the loss changes between the model updating
                             diff = cross_entropy_loss2 - cross_entropy_loss
 
+                            KLDiv = nn.KLDivLoss(reduction='none')(newHardScores, newHardScores2)
+
                             # Multiply the misclassification error (cross entropy) by the amount that this changes between the model updating
-                            # product = cross_entropy_loss2 * diff
-                            product = diff
-                            product_sorted, product_indices = torch.sort(product, descending=True)
+                            # metric = cross_entropy_loss2 * diff
+
+                            if sample_method == 'curated':
+                                metric = diff
+                            elif sample_method == 'interfered':
+                                metric = KLDiv
+
+                            sorted, indices = torch.sort(metric, descending=True) # Descending order, pick first 100
 
                             # Uniform dist will be [0, 1, 2, 3, 0, 1, 2] for allowed classes=4 and batch_size_replay=7
                             uniform_dist = torch.arange(batch_size_replay) % len(allowed_classes)
@@ -317,9 +325,9 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
 
                             # Top x most affected of the generated samples for each class (ensures it is balanced, slightly more computation than unbalanced)
                             # Unbalanced is as follows
-                            #indices_to_replay = product_indices[:batch_size_replay]
+                            #indices_to_replay = indices[:batch_size_replay]
 
-                            indices_to_replay = torch.cat(( [ product_indices[y_used[product_indices]==i][:counts_each_class[i]] for i in range(len(allowed_classes)) ] ))
+                            indices_to_replay = torch.cat(( [ indices[y_used[indices]==i][:counts_each_class[i]] for i in range(len(allowed_classes)) ] ))
                             x_ = x_[indices_to_replay]
 
             #--------------------------------------------OUTPUTS----------------------------------------------------#

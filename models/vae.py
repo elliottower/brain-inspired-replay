@@ -360,6 +360,7 @@ class AutoEncoder(ContinualLearner):
         # print((y_used))
         if (uniform_sampling):
             y_used = np.arange(size) % len(allowed_classes)
+            # y_used = np.random.shuffle(y_used) # Testing to see if the uniform sampling is broken
 
         # sample z
         if self.prior=="GMM":
