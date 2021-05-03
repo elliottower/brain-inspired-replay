@@ -217,21 +217,6 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                     utils.checkattr(previous_generator, 'dg_gates')
                 ) else False
 
-
-                # TREVOR'S CODE - SOFTMAX REPLAY
-                # Use the previous model to score the images from this new task
-                if sample_method=='softmax':
-                    with torch.no_grad():
-                        curTaskID = task-2
-                        newScores_og = previous_model.classify(previous_model.input_to_hidden(x), not_hidden=False if Generative else True)
-                        newScores = newScores_og[:, :(classes_per_task*(curTaskID+1))]
-                        softmax = torch.nn.Softmax(dim=1)
-                        newHardScores = softmax(newScores)
-                        avgError = torch.mean(newHardScores, dim=0)
-                        sampleProbs = torch.zeros(newScores_og.shape[1])
-                        sampleProbs[:(classes_per_task*(curTaskID+1))] = avgError[:(classes_per_task*(curTaskID+1))]
-
-
                 # Sample [x_]
                 if conditional_gen and scenario=="task":
                     # -if a conditional generator is used with task-IL scenario, generate data per previous task
@@ -250,12 +235,36 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                     # -which tasks/domains are allowed to be generated? (only relevant if "Domain-IL" with task-gates)
                     allowed_domains = list(range(task-1))
                     # -generate inputs representative of previous tasks
-                    if sample_method != 'curated':
+
+                    # --- SAMPLE METHOD CHOICES: softmax, random, uniform, curated ---
+                    # --- Softmax sampling: use previous model to score images from this new task, generate those classes
+                    if sample_method == 'softmax':
+                        with torch.no_grad():
+                            curTaskID = task - 2
+                            newScores_og = previous_model.classify(previous_model.input_to_hidden(x),
+                                                                   not_hidden=False if Generative else True)
+                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))]
+                            softmax = torch.nn.Softmax(dim=1)
+                            newHardScores = softmax(newScores)
+                            avgError = torch.mean(newHardScores, dim=0)
+                            sampleProbs = torch.zeros(newScores_og.shape[1])
+                            sampleProbs[:(classes_per_task * (curTaskID + 1))] = avgError[
+                                                                                 :(classes_per_task * (curTaskID + 1))]
+                        x_, _, task_used = previous_generator.sample(
+                            batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+                            only_x=False, class_probs=sampleProbs,uniform_sampling=False)
+                    # --- Uniformly random sampling (baseline) ---
+                    if sample_method == 'random':
+                        x_, _, task_used = previous_generator.sample(
+                            batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+                            only_x=False, class_probs=None, uniform_sampling=False)
+                    # --- Uniform sampling: balanced numbers of samples from each class ---
+                    elif sample_method == 'uniform':
                         x_, _, task_used = previous_generator.sample(
 	                        batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
-	                        only_x=False, class_probs=sampleProbs, uniform_sampling=True if sample_method=='uniform' else False)
+	                        only_x=False, class_probs=None, uniform_sampling=True)
+                    # --- Uniform sample curation: pick the best samples to show (by some metric), balance uniformly ---
                     else:
-                        # --- UNIFORM SAMPLE CURATION ---
                         # Generate x times as many samples as we need to then pick the best of
                         x_, y_used, task_used = previous_generator.sample(
                             batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
