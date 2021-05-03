@@ -268,7 +268,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         # Generate x times as many samples as we need to then pick the best of
                         x_, y_used, task_used = previous_generator.sample(
                             batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
-                            only_x=False, class_probs=sampleProbs, uniform_sampling=True)
+                            only_x=False, class_probs=None, uniform_sampling=True)
 
                         # --- Measure the performance of each of these samples on the current model ---
                         # Use the previous model to score the generated images (code taken from Trevor's softmax above)
