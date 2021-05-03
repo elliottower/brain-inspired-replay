@@ -62,7 +62,7 @@ def train(model, train_loader, iters, loss_cbs=list(), eval_cbs=list(), save_eve
 def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=None, classes_per_task=None,
              iters=2000, batch_size=32, batch_size_replay=None, loss_cbs=list(), eval_cbs=list(), sample_cbs=list(),
              generator=None, gen_iters=0, gen_loss_cbs=list(), feedback=False, reinit=False, args=None, only_last=False,
-             sample_method='random'):
+             sample_method='random', curated_multiplier=4):
     '''Train a model (with a "train_a_batch" method) on multiple tasks, with replay-strategy specified by [replay_mode].
 
     [model]             <nn.Module> main model to optimize across all tasks
@@ -78,6 +78,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
     [only_last]         <bool>, only train on final task / episode
     [*_cbs]             <list> of call-back functions to evaluate training-progress
     [sample_method]     <str> indicating the sample method, choices: 'random', 'uniform', 'curated', 'softmax'
+    [curated_multiplier]<int> choose curated samples out of size curated_multiplier * mutiply batch_size_replay
 
     '''
 
@@ -255,9 +256,9 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
 	                        only_x=False, class_probs=sampleProbs, uniform_sampling=True if sample_method=='uniform' else False)
                     else:
                         # --- UNIFORM SAMPLE CURATION ---
-                        # Generate 4x as many samples as we need to then pick the best of TODO: create parameter for this
+                        # Generate x times as many samples as we need to then pick the best of
                         x_, y_used, task_used = previous_generator.sample(
-                            batch_size_replay * 4, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+                            batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
                             only_x=False, class_probs=sampleProbs, uniform_sampling=True)
 
                         # --- Measure the performance of each of these samples on the current model ---
