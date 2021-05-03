@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from torch import nn
 from torch.utils.data import ConcatDataset
 import tqdm
 import copy
@@ -61,7 +62,7 @@ def train(model, train_loader, iters, loss_cbs=list(), eval_cbs=list(), save_eve
 def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=None, classes_per_task=None,
              iters=2000, batch_size=32, batch_size_replay=None, loss_cbs=list(), eval_cbs=list(), sample_cbs=list(),
              generator=None, gen_iters=0, gen_loss_cbs=list(), feedback=False, reinit=False, args=None, only_last=False,
-             uniform_sample_curation=False):
+             sample_method='random'):
     '''Train a model (with a "train_a_batch" method) on multiple tasks, with replay-strategy specified by [replay_mode].
 
     [model]             <nn.Module> main model to optimize across all tasks
@@ -75,7 +76,10 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
     [generator]         None or <nn.Module>, if a seperate generative model should be trained (for [gen_iters] per task)
     [feedback]          <bool>, if True and [replay_mode]="generative", the main model is used for generating replay
     [only_last]         <bool>, only train on final task / episode
-    [*_cbs]             <list> of call-back functions to evaluate training-progress'''
+    [*_cbs]             <list> of call-back functions to evaluate training-progress
+    [sample_method]     <str> indicating the sample method, choices: 'random', 'uniform', 'curated', 'softmax'
+
+    '''
 
     # Should convolutional layers be frozen?
     freeze_convE = (utils.checkattr(args, "freeze_convE") and hasattr(args, "depth") and args.depth>0)
@@ -215,15 +219,16 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
 
                 # TREVOR'S CODE - SOFTMAX REPLAY
                 # Use the previous model to score the images from this new task
-                with torch.no_grad():
-                    curTaskID = task-2
-                    newScores_og = previous_model.classify(previous_model.input_to_hidden(x), not_hidden=False if Generative else True)
-                    newScores = newScores_og[:, :(classes_per_task*(curTaskID+1))]
-                    softmax = torch.nn.Softmax(dim=1)
-                    newHardScores = softmax(newScores)
-                    avgError = torch.mean(newHardScores, dim=0)
-                    sampleProbs = torch.zeros(newScores_og.shape[1])
-                    sampleProbs[:(classes_per_task*(curTaskID+1))] = avgError[:(classes_per_task*(curTaskID+1))]
+                if sample_method=='softmax':
+                    with torch.no_grad():
+                        curTaskID = task-2
+                        newScores_og = previous_model.classify(previous_model.input_to_hidden(x), not_hidden=False if Generative else True)
+                        newScores = newScores_og[:, :(classes_per_task*(curTaskID+1))]
+                        softmax = torch.nn.Softmax(dim=1)
+                        newHardScores = softmax(newScores)
+                        avgError = torch.mean(newHardScores, dim=0)
+                        sampleProbs = torch.zeros(newScores_og.shape[1])
+                        sampleProbs[:(classes_per_task*(curTaskID+1))] = avgError[:(classes_per_task*(curTaskID+1))]
 
 
                 # Sample [x_]
@@ -244,28 +249,68 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                     # -which tasks/domains are allowed to be generated? (only relevant if "Domain-IL" with task-gates)
                     allowed_domains = list(range(task-1))
                     # -generate inputs representative of previous tasks
-                    if (not uniform_sample_curation): 
-	                    x_temp_ = previous_generator.sample(
+                    if sample_method != 'curated':
+                        x_, _, task_used = previous_generator.sample(
 	                        batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
-	                        only_x=False, class_probs=sampleProbs, uniform_sampling=True) # CHANGE SAMPLING METHOD HERE
-	                    x_ = x_temp_[0]
-	                    task_used = x_temp_[2]
+	                        only_x=False, class_probs=sampleProbs, uniform_sampling=True if sample_method=='uniform' else False)
                     else:
-                    	# Here, do whatever you'd want to do for Uniform Sample Curation
-                        pass
+                        # --- UNIFORM SAMPLE CURATION ---
+                        # Generate 4x as many samples as we need to then pick the best of TODO: create parameter for this
+                        x_, y_used, task_used = previous_generator.sample(
+                            batch_size_replay * 4, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+                            only_x=False, class_probs=sampleProbs, uniform_sampling=True)
 
+                        # --- Measure the performance of each of these samples on the current model ---
+                        # Use the previous model to score the generated images (code taken from Trevor's softmax above)
+                        with torch.no_grad():
+                            curTaskID = task - 2
+                            newScores_og = model.classify(model.input_to_hidden(x_),
+                                                                   not_hidden=False if Generative else True)
+                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
+                            softmax = torch.nn.Softmax(dim=1)
+                            newHardScores = softmax(newScores) # Makes the scores sum to 1 (probabilities)
+                            cross_entropy = nn.CrossEntropyLoss(reduction='none')
+                            cross_entropy_loss = cross_entropy(newHardScores, torch.tensor(y_used))
 
+                        # --- Copy the model and perform an update on just the new incoming data (no replayed data) ---
+                        # This will lead to catastrophic forgetting, as it has no replays to prevent this from happening
+                        model_tmp = copy.deepcopy(model)
+                        _ = model_tmp.train_a_batch(x, y=y, x_=None, y_=None, scores_=None,
+                                                        tasks_=task_used, active_classes=active_classes, task=task, rnt=(
+                                                            1. if task==1 else 1./task
+                                                        ) if rnt is None else rnt, freeze_convE=freeze_convE,
+                                                        replay_not_hidden=False if Generative else True)
 
-                # TREVOR'S CODE - UNIFORM SAMPLE CURATION 
-                # The following code (and some of the above code, where the x_ is being generated) is a basis for how
-                # to train a model. We want to copy the current model, and then run through training 
+                        # --- Measure the performance of each of the generated samples on this updated model ---
+                        # This can tell us how much the model 'forgets' each of these samples, we will replay the worst ones
+                        with torch.no_grad():
+                            curTaskID = task - 2
+                            newScores_og = model_tmp.classify(model_tmp.input_to_hidden(x_),
+                                                                   not_hidden=False if Generative else True)
+                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
+                            softmax = torch.nn.Softmax(dim=1)
+                            newHardScores2 = softmax(newScores) # Makes the scores sum to 1 (probabilities)
+                            cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
+                            cross_entropy_loss2 = cross_entropy(newHardScores2, torch.tensor(y_used))
 
-                # loss_dict = model.train_a_batch(x, y=y, x_=x_, y_=y_, scores_=scores_,
-                #                                 tasks_=task_used, active_classes=active_classes, task=task, rnt=(
-                #                                     1. if task==1 else 1./task
-                #                                 ) if rnt is None else rnt, freeze_convE=freeze_convE,
-                #                                 replay_not_hidden=False if Generative else True)
+                            # Amount that the loss changes between the model updating
+                            diff = cross_entropy_loss2 - cross_entropy_loss
 
+                            # Multiply the misclassification error (cross entropy) by the amount that this changes between the model updating
+                            # product = cross_entropy_loss2 * diff
+                            product = diff
+                            product_sorted, product_indices = torch.sort(product, descending=True)
+
+                            # Uniform dist will be [0, 1, 2, 3, 0, 1, 2] for allowed classes=4 and batch_size_replay=7
+                            uniform_dist = torch.arange(batch_size_replay) % len(allowed_classes)
+                            counts_each_class = torch.unique(uniform_dist, return_counts=True)[1]
+
+                            # Top x most affected of the generated samples for each class (ensures it is balanced, slightly more computation than unbalanced)
+                            # Unbalanced is as follows
+                            #indices_to_replay = product_indices[:batch_size_replay]
+
+                            indices_to_replay = torch.cat(( [ product_indices[y_used[product_indices]==i][:counts_each_class[i]] for i in range(len(allowed_classes)) ] ))
+                            x_ = x_[indices_to_replay]
 
             #--------------------------------------------OUTPUTS----------------------------------------------------#
 

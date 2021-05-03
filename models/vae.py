@@ -357,7 +357,7 @@ class AutoEncoder(ContinualLearner):
 
         # Re-setting y_used if "uniform sampling" is turned on; could change to increase efficiency (need to analyze
         # the above conditional to know if anything else important is set in it) 
-        print((y_used))
+        # print((y_used))
         if (uniform_sampling):
             y_used = np.arange(size) % len(allowed_classes)
 
