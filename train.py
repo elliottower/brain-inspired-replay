@@ -263,8 +263,8 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                     # --- Uniform sampling: balanced numbers of samples from each class ---
                     elif sample_method == 'uniform':
                         x_, y_used, task_used = previous_generator.sample(
-	                        batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
-	                        only_x=False, class_probs=None, uniform_sampling=True)
+                            batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+                            only_x=False, class_probs=None, uniform_sampling=True)
                         # print("y_used: ", torch.unique(torch.tensor(y_used), return_counts=True))
                     # --- Uniform sample curation: pick the best samples to show (by some metric), balance uniformly ---
                     else:
@@ -277,12 +277,12 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         # Use the previous model to score the generated images (code taken from Trevor's softmax above)
                         with torch.no_grad():
                             curTaskID = task - 2
-                            newScores_og = model.classify(model.input_to_hidden(x_),
-                                                                   not_hidden=False if Generative else True)
+                            newScores_og = model.classify(x_, not_hidden=False if Generative else True)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
                             newHardScores = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
                             cross_entropy = nn.CrossEntropyLoss(reduction='none')
-                            cross_entropy_loss = cross_entropy(newHardScores, torch.tensor(y_used))
+                            y_used = torch.tensor(y_used, dtype=torch.long).to(device)
+                            cross_entropy_loss = cross_entropy(newHardScores, y_used)
 
                         # --- Copy the model and perform an update on just the new incoming data (no replayed data) ---
                         # This will lead to catastrophic forgetting, as it has no replays to prevent this from happening
@@ -298,15 +298,20 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         # This can tell us how much the model 'forgets' each of these samples, we will replay the worst ones
                         with torch.no_grad():
                             curTaskID = task - 2
+<<<<<<< HEAD
+                            newScores_og = model_tmp.classify(x_, not_hidden=False if Generative else True)
+                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
+=======
                             newScores_og = model_tmp.classify(model_tmp.input_to_hidden(x_),
                                                                    not_hidden=False if Generative else True)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 2))] # Logits that don't sum to 1
+>>>>>>> a09ae966438f966a3d9e65f10ab38c54e4972a92
                             newHardScores2 = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
 
                             # --- Measure the difference in cross entropy loss for predictions before and after ---
                             if sample_method == 'curated':
                                 cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
-                                cross_entropy_loss2 = cross_entropy(newHardScores2, torch.tensor(y_used))
+                                cross_entropy_loss2 = cross_entropy(newHardScores2, y_used)
 
                                 # Amount that the loss changes between the model updating
                                 diff = cross_entropy_loss2 - cross_entropy_loss
@@ -340,9 +345,9 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             uniform = False # temporary
                             # Temp code for uniform
                             if uniform:
-                                indices2 = indices.numpy()
+                                indices2 = indices.cpu().numpy()
                                 np.random.shuffle(indices2)
-                                indices = torch.from_numpy(indices2)
+                                indices = torch.from_numpy(indices2).to(device)
 
                             # --- Calculate how many examples for each class should be generated to divide up uniformly ---
                             # Uniform dist will be [0, 1, 2, 3, 0, 1, 2] for allowed classes=4 and batch_size_replay=7
