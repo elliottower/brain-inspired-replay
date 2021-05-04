@@ -298,14 +298,11 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         # This can tell us how much the model 'forgets' each of these samples, we will replay the worst ones
                         with torch.no_grad():
                             curTaskID = task - 2
-<<<<<<< HEAD
                             newScores_og = model_tmp.classify(x_, not_hidden=False if Generative else True)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
-=======
                             newScores_og = model_tmp.classify(model_tmp.input_to_hidden(x_),
                                                                    not_hidden=False if Generative else True)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 2))] # Logits that don't sum to 1
->>>>>>> a09ae966438f966a3d9e65f10ab38c54e4972a92
                             newHardScores2 = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
 
                             # --- Measure the difference in cross entropy loss for predictions before and after ---
