@@ -77,7 +77,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
     [feedback]          <bool>, if True and [replay_mode]="generative", the main model is used for generating replay
     [only_last]         <bool>, only train on final task / episode
     [*_cbs]             <list> of call-back functions to evaluate training-progress
-    [sample_method]     <str> indicating the sample method, choices: 'random', 'uniform', 'curated', 'softmax', 'interfered'
+    [sample_method]     <str> indicating the sample method, choices: 'random', 'uniform', 'curated', 'softmax', 'interfered', 'misclassified'
     [curated_multiplier]<int> choose curated samples out of size curated_multiplier * mutiply batch_size_replay
 
     '''
@@ -299,9 +299,6 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         with torch.no_grad():
                             curTaskID = task - 2
                             newScores_og = model_tmp.classify(x_, not_hidden=False if Generative else True)
-                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
-                            newScores_og = model_tmp.classify(model_tmp.input_to_hidden(x_),
-                                                                   not_hidden=False if Generative else True)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 2))] # Logits that don't sum to 1
                             newHardScores2 = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
 
@@ -331,10 +328,8 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             # This the opposite approach to softmax, where softmax takes the current model and calculates
                             # Which classes does it confuse the new data for the most, this trains on the new data and then
                             # Tries to find generated examples which it confuses for the new data classes the most
-                            # Need to use y_used and NewHardScores2 and find the new scores which predict the new classes most
-                            # scores_newtask = newScores_og[:, :(classes_per_task * (curTaskID + 2))] # Logits that don't sum to 1
-                            # print(newHardScores.shape)
-                            # print(newHardScores2.shape)
+                            elif sample_method == 'misclassified':
+                                metric = newHardScores2[:, -1] + newHardScores2[:, -1]
 
                             # --- Sort based on some metric, then divide up by classes (afterwards) ---
                             sorted, indices = torch.sort(metric, descending=True) # Descending order, pick first 100
