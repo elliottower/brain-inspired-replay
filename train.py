@@ -255,7 +255,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             only_x=False, class_probs=sampleProbs,uniform_sampling=False)
                         # print("y_used: ", torch.unique(torch.tensor(y_used), return_counts=True))
                     # --- Uniformly random sampling (baseline) ---
-                    if sample_method == 'random':
+                    elif sample_method == 'random':
                         x_, y_used, task_used = previous_generator.sample(
                             batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
                             only_x=False, class_probs=None, uniform_sampling=False)
@@ -287,6 +287,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         # --- Copy the model and perform an update on just the new incoming data (no replayed data) ---
                         # This will lead to catastrophic forgetting, as it has no replays to prevent this from happening
                         model_tmp = copy.deepcopy(model)
+                        # NOTE: Can train multiple batches if needed, but it would be on the same data, so any changes will just be exacerbated
                         _ = model_tmp.train_a_batch(x, y=y, x_=None, y_=None, scores_=None,
                                                         tasks_=task_used, active_classes=active_classes, task=task, rnt=(
                                                             1. if task==1 else 1./task
@@ -299,9 +300,10 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             curTaskID = task - 2
                             newScores_og = model_tmp.classify(model_tmp.input_to_hidden(x_),
                                                                    not_hidden=False if Generative else True)
-                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
+                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 2))] # Logits that don't sum to 1
                             newHardScores2 = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
 
+                            # --- Measure the difference in cross entropy loss for predictions before and after ---
                             if sample_method == 'curated':
                                 cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
                                 cross_entropy_loss2 = cross_entropy(newHardScores2, torch.tensor(y_used))
@@ -313,6 +315,9 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             # Multiply the misclassification error (cross entropy) by the amount that this changes between the model updating
                             # metric = cross_entropy_loss2 * diff
 
+                            # --- Measure KL Divergence between predictions before and predictions afterwards ---
+                            # Maximally Interfered Retrieval uses a linear combination of KL, entropy, and 'variance'
+                            # This ensures the samples are not too close together, but we do not currently measure that
                             elif sample_method == 'interfered':
                                 KLDiv = nn.KLDivLoss(reduction='none')(newHardScores, newHardScores2)
 
@@ -320,23 +325,37 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                 #KLDiv = [ nn.KLDivLoss()(newHardScores[i], newHardScores2[i]) for i in range(len(newHardScores))]
                                 metric = torch.tensor(KLDiv) - 0 * cross_entropy_loss
 
+                            # --- New idea: use the examples which the new model misclassifies the most as one of the new classes
+                            # This the opposite approach to softmax, where softmax takes the current model and calculates
+                            # Which classes does it confuse the new data for the most, this trains on the new data and then
+                            # Tries to find generated examples which it confuses for the new data classes the most
+                            # Need to use y_used and NewHardScores2 and find the new scores which predict the new classes most
+                            # scores_newtask = newScores_og[:, :(classes_per_task * (curTaskID + 2))] # Logits that don't sum to 1
+                            # print(newHardScores.shape)
+                            # print(newHardScores2.shape)
+
+                            # --- Sort based on some metric, then divide up by classes (afterwards) ---
                             sorted, indices = torch.sort(metric, descending=True) # Descending order, pick first 100
 
-                            uniform = True # temporary
+                            uniform = False # temporary
                             # Temp code for uniform
                             if uniform:
                                 indices2 = indices.numpy()
                                 np.random.shuffle(indices2)
                                 indices = torch.from_numpy(indices2)
 
+                            # --- Calculate how many examples for each class should be generated to divide up uniformly ---
                             # Uniform dist will be [0, 1, 2, 3, 0, 1, 2] for allowed classes=4 and batch_size_replay=7
                             uniform_dist = torch.arange(batch_size_replay) % len(allowed_classes)
                             counts_each_class = torch.unique(uniform_dist, return_counts=True)[1]
 
-                            # Top x most affected of the generated samples for each class (ensures it is balanced, slightly more computation than unbalanced)
-                            # Unbalanced is as follows
+                            # --- Optional: Calculate unbalanced indices to replay, results in poor performance ---
+                            # If we added a variation term to ensure samples are different from each other, this could
+                            # be a simpler way to do things, but variance would be pretty complicated to calculate
                             #indices_to_replay = indices[:batch_size_replay]
 
+                            # --- Select the top k_i indices for each class i, where k_i is the number of examples for that class ---
+                            # Top x most affected of the generated samples for each class (ensures it is balanced, slightly more computation than unbalanced)
                             indices_to_replay = torch.cat(( [ indices[y_used[indices]==i][:counts_each_class[i]] for i in range(len(allowed_classes)) ] ))
                             x_ = x_[indices_to_replay]
 
