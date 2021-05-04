@@ -301,23 +301,33 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                                                    not_hidden=False if Generative else True)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
                             newHardScores2 = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
-                            cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
-                            cross_entropy_loss2 = cross_entropy(newHardScores2, torch.tensor(y_used))
 
-                            # Amount that the loss changes between the model updating
-                            diff = cross_entropy_loss2 - cross_entropy_loss
+                            if sample_method == 'curated':
+                                cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
+                                cross_entropy_loss2 = cross_entropy(newHardScores2, torch.tensor(y_used))
 
-                            KLDiv = nn.KLDivLoss(reduction='none')(newHardScores, newHardScores2)
+                                # Amount that the loss changes between the model updating
+                                diff = cross_entropy_loss2 - cross_entropy_loss
+                                metric = diff
 
                             # Multiply the misclassification error (cross entropy) by the amount that this changes between the model updating
                             # metric = cross_entropy_loss2 * diff
 
-                            if sample_method == 'curated':
-                                metric = diff
                             elif sample_method == 'interfered':
-                                metric = KLDiv
+                                KLDiv = nn.KLDivLoss(reduction='none')(newHardScores, newHardScores2)
+
+                                # Test code to compute KL divergence for every example individually, above code is (512, 2) rather than (512, 1) for some reason
+                                #KLDiv = [ nn.KLDivLoss()(newHardScores[i], newHardScores2[i]) for i in range(len(newHardScores))]
+                                metric = torch.tensor(KLDiv) - 0 * cross_entropy_loss
 
                             sorted, indices = torch.sort(metric, descending=True) # Descending order, pick first 100
+
+                            uniform = True # temporary
+                            # Temp code for uniform
+                            if uniform:
+                                indices2 = indices.numpy()
+                                np.random.shuffle(indices2)
+                                indices = torch.from_numpy(indices2)
 
                             # Uniform dist will be [0, 1, 2, 3, 0, 1, 2] for allowed classes=4 and batch_size_replay=7
                             uniform_dist = torch.arange(batch_size_replay) % len(allowed_classes)
