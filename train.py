@@ -250,10 +250,10 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             sampleProbs = torch.zeros(newScores_og.shape[1])
                             sampleProbs[:(classes_per_task * (curTaskID + 1))] = avgError[
                                                                                  :(classes_per_task * (curTaskID + 1))]
-                        x_, y_used, task_used = previous_generator.sample(
-                            batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
-                            only_x=False, class_probs=sampleProbs,uniform_sampling=False)
-                        # print("y_used: ", torch.unique(torch.tensor(y_used), return_counts=True))
+                            x_, y_used, task_used = previous_generator.sample(
+                                batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+                                only_x=False, class_probs=sampleProbs,uniform_sampling=False)
+                        
                     # --- Uniformly random sampling (baseline) ---
                     elif sample_method == 'random':
                         x_, y_used, task_used = previous_generator.sample(
@@ -268,10 +268,39 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         # print("y_used: ", torch.unique(torch.tensor(y_used), return_counts=True))
                     # --- Uniform sample curation: pick the best samples to show (by some metric), balance uniformly ---
                     else:
-                        # Generate x times as many samples as we need to then pick the best of
-                        x_, y_used, task_used = previous_generator.sample(
-                            batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
-                            only_x=False, class_probs=None, uniform_sampling=False)
+
+                        if (sample_method == "curated_variety"):
+                            # Generate x times as many samples as we need to then pick the best of
+                            x_, y_used, task_used, varietyVector = previous_generator.sample(
+                                batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+                                only_x=False, class_probs=None, uniform_sampling=False, varietyVector=True)
+
+
+                        elif(sample_method == "curated_softmax"):
+
+                            with torch.no_grad():
+                                curTaskID = task - 2
+                                newScores_og = previous_model.classify(previous_model.input_to_hidden(x),
+                                                                       not_hidden=False if Generative else True)
+                                newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))]
+                                softmax = torch.nn.Softmax(dim=1)
+                                newHardScores = nn.Softmax(dim=1)(newScores)
+                                avgError = torch.mean(newHardScores, dim=0)
+                                sampleProbs = torch.zeros(newScores_og.shape[1])
+                                sampleProbs[:(classes_per_task * (curTaskID + 1))] = avgError[
+                                                                                     :(classes_per_task * (curTaskID + 1))]
+
+                            # Generate x times as many samples as we need to then pick the best of
+                            x_, y_used, task_used = previous_generator.sample(
+                                batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+                                only_x=False, class_probs=sampleProbs, uniform_sampling=False)
+
+
+                        else: 
+                            # Generate x times as many samples as we need to then pick the best of
+                            x_, y_used, task_used = previous_generator.sample(
+                                batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+                                only_x=False, class_probs=None, uniform_sampling=False)
 
                         # --- Measure the performance of each of these samples on the current model ---
                         # Use the previous model to score the generated images (code taken from Trevor's softmax above)
@@ -303,13 +332,27 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             newHardScores2 = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
 
                             # --- Measure the difference in cross entropy loss for predictions before and after ---
-                            if sample_method == 'curated':
+                            if sample_method == 'curated' or sample_method == "curated_softmax":
                                 cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
                                 cross_entropy_loss2 = cross_entropy(newHardScores2, y_used)
 
                                 # Amount that the loss changes between the model updating
                                 diff = cross_entropy_loss2 - cross_entropy_loss
                                 metric = diff
+
+                            # TREVOR'S NEW METHOD - This tries to take into account the variety of the samples
+                            elif sample_method == "curated_variety":
+                                cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
+                                cross_entropy_loss2 = cross_entropy(newHardScores2, y_used)
+
+                                # Amount that the loss changes between the model updating
+                                diff = cross_entropy_loss2 - cross_entropy_loss
+                                
+                                # Softmaxing diff and the variety vector
+                                varietyWeight = 0.5
+                                diff_SM = nn.Softmax(dim=0)(diff)
+                                variety_SM = nn.Softmax(dim=0)(varietyVector)
+                                metric = ((1-varietyWeight) * diff_SM) + (varietyWeight * variety_SM)
 
                             # Multiply the misclassification error (cross entropy) by the amount that this changes between the model updating
                             # metric = cross_entropy_loss2 * diff
@@ -319,10 +362,17 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             # This ensures the samples are not too close together, but we do not currently measure that
                             elif sample_method == 'interfered':
                                 KLDiv = nn.KLDivLoss(reduction='none')(newHardScores, newHardScores2)
+                                print(KLDiv.shape)
+                                print(cross_entropy_loss.shape)
 
                                 # Test code to compute KL divergence for every example individually, above code is (512, 2) rather than (512, 1) for some reason
                                 #KLDiv = [ nn.KLDivLoss()(newHardScores[i], newHardScores2[i]) for i in range(len(newHardScores))]
-                                metric = torch.tensor(KLDiv) - 0 * cross_entropy_loss
+
+                                # Note from Trevor: When I tried to run this method, there was a size mismatch. 
+                                # KLDiv.shape = (1024, 10), whereas cross_entropy_loss.shape = (1024,), and it said
+                                # that they needed to be equal on dim 1. Sooo: I tried to just transpose the KLDiv matrix, 
+                                # and it worked. Honestly, I'm too tired to try and decipher what I did mathematically lol
+                                metric = torch.tensor(KLDiv.T) - 0 * cross_entropy_loss
 
                             # --- New idea: use the examples which the new model misclassifies the most as one of the new classes
                             # This the opposite approach to softmax, where softmax takes the current model and calculates
@@ -340,7 +390,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                 np.random.shuffle(indices2)
                                 indices = torch.from_numpy(indices2).to(device)
 
-                            if sample_method != 'random_large':
+                            if sample_method != 'random_large' and sample_method != 'curated_softmax':
                                 # --- Calculate how many examples for each class should be generated to divide up uniformly ---
                                 # Uniform dist will be [0, 1, 2, 3, 0, 1, 2] for allowed classes=4 and batch_size_replay=7
                                 uniform_dist = torch.arange(batch_size_replay) % len(allowed_classes)

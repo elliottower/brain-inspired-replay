@@ -308,7 +308,7 @@ class AutoEncoder(ContinualLearner):
     ##------ SAMPLE FUNCTIONS --------##
 
     def sample(self, size, allowed_classes=None, class_probs=None, sample_mode=None, allowed_domains=None,
-               only_x=False, uniform_sampling=False, **kwargs):
+               only_x=False, uniform_sampling=False, varietyVector=False, **kwargs):
         '''Generate [size] samples from the model. Outputs are tensors (not "requiring grad"), on same device as <self>.
 
         INPUT:  - [allowed_classes]     <list> of [class_ids] from which to sample
@@ -374,6 +374,10 @@ class AutoEncoder(ContinualLearner):
         else:
             z = torch.randn(size, self.z_dim).to(self._device())
 
+        diffVector = None
+        if (varietyVector):
+            diffVector = torch.cdist(z, z).sum(1)
+
         # if no classes are selected yet, but they are needed for the "decoder-gates", select classes to be sampled
         if (y_used is None) and (self.dg_gates):
             if allowed_classes is None and class_probs is None:
@@ -397,6 +401,10 @@ class AutoEncoder(ContinualLearner):
         # decode z into image X
         with torch.no_grad():
             X = self.decode(z, gate_input=(task_used if self.dg_type=="task" else y_used) if self.dg_gates else None)
+
+        # If we ALSO need to return the varietyVector, use this return statement
+        if (varietyVector):
+            return (X, y_used, task_used, diffVector)
 
         # return samples as [batch_size]x[channels]x[image_size]x[image_size] tensor, plus requested additional info
         return X if only_x else (X, y_used, task_used)
