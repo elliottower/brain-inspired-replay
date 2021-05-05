@@ -299,7 +299,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         with torch.no_grad():
                             curTaskID = task - 2
                             newScores_og = model_tmp.classify(x_, not_hidden=False if Generative else True)
-                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 2))] # Logits that don't sum to 1
+                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
                             newHardScores2 = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
 
                             # --- Measure the difference in cross entropy loss for predictions before and after ---
@@ -328,33 +328,36 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             # This the opposite approach to softmax, where softmax takes the current model and calculates
                             # Which classes does it confuse the new data for the most, this trains on the new data and then
                             # Tries to find generated examples which it confuses for the new data classes the most
-                            elif sample_method == 'misclassified':
+                            elif sample_method == 'misclassified' or sample_method == 'uniform_large' or sample_method == 'random_large':
                                 metric = newHardScores2[:, -1] + newHardScores2[:, -1]
 
                             # --- Sort based on some metric, then divide up by classes (afterwards) ---
                             sorted, indices = torch.sort(metric, descending=True) # Descending order, pick first 100
 
-                            uniform = False # temporary
-                            # Temp code for uniform
-                            if uniform:
+                            # Shuffle indices around to test choosing from this larger pool of generated samples randomly
+                            if sample_method == 'uniform_large' or sample_method == 'random_large':
                                 indices2 = indices.cpu().numpy()
                                 np.random.shuffle(indices2)
                                 indices = torch.from_numpy(indices2).to(device)
 
-                            # --- Calculate how many examples for each class should be generated to divide up uniformly ---
-                            # Uniform dist will be [0, 1, 2, 3, 0, 1, 2] for allowed classes=4 and batch_size_replay=7
-                            uniform_dist = torch.arange(batch_size_replay) % len(allowed_classes)
-                            counts_each_class = torch.unique(uniform_dist, return_counts=True)[1]
+                            if sample_method != 'random_large':
+                                # --- Calculate how many examples for each class should be generated to divide up uniformly ---
+                                # Uniform dist will be [0, 1, 2, 3, 0, 1, 2] for allowed classes=4 and batch_size_replay=7
+                                uniform_dist = torch.arange(batch_size_replay) % len(allowed_classes)
+                                counts_each_class = torch.unique(uniform_dist, return_counts=True)[1]
 
-                            # --- Optional: Calculate unbalanced indices to replay, results in poor performance ---
-                            # If we added a variation term to ensure samples are different from each other, this could
-                            # be a simpler way to do things, but variance would be pretty complicated to calculate
-                            #indices_to_replay = indices[:batch_size_replay]
+                                # --- Optional: Calculate unbalanced indices to replay, results in poor performance ---
+                                # If we added a variation term to ensure samples are different from each other, this could
+                                # be a simpler way to do things, but variance would be pretty complicated to calculate
+                                #indices_to_replay = indices[:batch_size_replay]
 
-                            # --- Select the top k_i indices for each class i, where k_i is the number of examples for that class ---
-                            # Top x most affected of the generated samples for each class (ensures it is balanced, slightly more computation than unbalanced)
-                            indices_to_replay = torch.cat(( [ indices[y_used[indices]==i][:counts_each_class[i]] for i in range(len(allowed_classes)) ] ))
-                            x_ = x_[indices_to_replay]
+                                # --- Select the top k_i indices for each class i, where k_i is the number of examples for that class ---
+                                # Top x most affected of the generated samples for each class (ensures it is balanced, slightly more computation than unbalanced)
+                                indices_to_replay = torch.cat(( [ indices[y_used[indices]==i][:counts_each_class[i]] for i in range(len(allowed_classes)) ] ))
+                                x_ = x_[indices_to_replay]
+                            else:
+                                # Uniformly randomly choose from the 400 samples generated
+                                x_ = x_[indices]
 
             #--------------------------------------------OUTPUTS----------------------------------------------------#
 
