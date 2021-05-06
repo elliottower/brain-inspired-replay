@@ -155,6 +155,22 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
         # -if only the final task should be trained on:
         if only_last and not task==len(train_datasets):
             iters_to_use = 0
+
+        # This helps w/ speeding up curated_classVariety
+        mask = None
+        if (sample_method=="curated_classVariety" and (task-1)>0):
+            sampleAmt = batch_size_replay * curated_multiplier
+            classNum = classes_per_task*(task-1)
+            indexList = [[idx for idx in range(sampleAmt) if (idx%classNum) == (rowIdx%classNum)] for rowIdx in range(sampleAmt)]
+            mask = []
+            for rowIdxList in indexList:
+                curRow = [0] * sampleAmt
+                for idx in rowIdxList:
+                    curRow[idx] = 1
+                mask.append(curRow)
+            mask = torch.tensor(mask, dtype=torch.float).to(device)
+
+
         for batch_index in range(1, iters_to_use+1):
 
             # Update # iters left on current data-loader(s) and, if needed, create new one(s)
@@ -259,13 +275,12 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         x_, y_used, task_used = previous_generator.sample(
                             batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
                             only_x=False, class_probs=None, uniform_sampling=False)
-                        # print("y_used: ", torch.unique(torch.tensor(y_used), return_counts=True))
+
                     # --- Uniform sampling: balanced numbers of samples from each class ---
                     elif sample_method == 'uniform':
                         x_, y_used, task_used = previous_generator.sample(
                             batch_size_replay, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
                             only_x=False, class_probs=None, uniform_sampling=True)
-                        # print("y_used: ", torch.unique(torch.tensor(y_used), return_counts=True))
                     # --- Uniform sample curation: pick the best samples to show (by some metric), balance uniformly ---
                     else:
 
@@ -275,6 +290,12 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                 batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
                                 only_x=False, class_probs=None, uniform_sampling=False, varietyVector=True)
 
+                        # CURATED USING CLASS VARIETY (i.e., generating batch_size_reply*curated_multipler / len(allowed_classes) samples 
+                        # per class, where each sample is the "most different" sample based off our variety calculation 
+                        elif(sample_method == "curated_classVariety"):
+                            x_, y_used, task_used, varietyVector = previous_generator.sample(
+                                batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
+                                only_x=False, class_probs=None, uniform_sampling=True, varietyVector=True, classVariety=True, classVarietyMask=mask)
 
                         elif(sample_method == "curated_softmax"):
 
@@ -328,7 +349,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         with torch.no_grad():
                             curTaskID = task - 2
                             newScores_og = model_tmp.classify(x_, not_hidden=False if Generative else True)
-                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
+                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 2))] # Logits that don't sum to 1
                             newHardScores2 = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
 
                             # --- Measure the difference in cross entropy loss for predictions before and after ---
@@ -341,7 +362,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                 metric = diff
 
                             # TREVOR'S NEW METHOD - This tries to take into account the variety of the samples
-                            elif sample_method == "curated_variety":
+                            elif sample_method == "curated_variety" or sample_method == "curated_classVariety":
                                 cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
                                 cross_entropy_loss2 = cross_entropy(newHardScores2, y_used)
 

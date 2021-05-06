@@ -199,7 +199,7 @@ def add_replay_options(parser, only_MNIST=False, compare_code="none", **kwargs):
     # - hyper-parameters (again only if separate generator)
     replay.add_argument('--gen-iters', type=int, dest="g_iters", help="# batches to optimize generator (def=[iters])")
     replay.add_argument('--lr-gen', type=float, help="learning rate (separate) generator (default: lr)")
-    sample_choices = ['random', 'uniform', 'curated', 'softmax', 'interfered', 'misclassified', 'random_large', 'uniform_large', 'curated_variety', 'curated_softmax']
+    sample_choices = ['random', 'uniform', 'curated', 'softmax', 'interfered', 'misclassified', 'random_large', 'uniform_large', 'curated_variety', 'curated_softmax', "curated_classVariety"]
     replay.add_argument('--sample_method', type=str, default='random', choices=sample_choices, help="sampling method for choosing samples, choices: 'random', 'uniform', 'curated'")
     replay.add_argument('--curated_multiplier', type=int, default=4, help="choose curated samples out of size curated_multiplier * mutiply batch_size_replay")
     # -add VAE-specific parameters

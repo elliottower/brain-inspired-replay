@@ -308,7 +308,7 @@ class AutoEncoder(ContinualLearner):
     ##------ SAMPLE FUNCTIONS --------##
 
     def sample(self, size, allowed_classes=None, class_probs=None, sample_mode=None, allowed_domains=None,
-               only_x=False, uniform_sampling=False, varietyVector=False, **kwargs):
+               only_x=False, uniform_sampling=False, varietyVector=False, classVariety=False, classVarietyMask=None, **kwargs):
         '''Generate [size] samples from the model. Outputs are tensors (not "requiring grad"), on same device as <self>.
 
         INPUT:  - [allowed_classes]     <list> of [class_ids] from which to sample
@@ -359,7 +359,9 @@ class AutoEncoder(ContinualLearner):
         # the above conditional to know if anything else important is set in it) 
         # print((y_used))
         if (uniform_sampling):
-            y_used = np.arange(size) % len(allowed_classes)
+            print(uniform_sampling)
+            y_used = (np.arange(size) % len(allowed_classes)).astype(int)
+            sampled_modes = y_used
             # y_used = np.random.shuffle(y_used) # Testing to see if the uniform sampling is broken
 
         # sample z
@@ -376,7 +378,24 @@ class AutoEncoder(ContinualLearner):
 
         diffVector = None
         if (varietyVector):
-            diffVector = torch.cdist(z, z).sum(1)
+            # If we've got "classVariety" on, we want to find the "most different" examples
+            # in each of the classes. 
+            if (classVariety and classVarietyMask is not None):
+                D = torch.cdist(z, z)
+                classNum = len(allowed_classes)
+
+                # THIS IS TERRIBLY SLOW, BUT IT'S WHAT WE WANT TO DO 
+                # diffVector = []
+                # for rowIdx, row in enumerate(D):
+                #     diffVector.append(torch.tensor([x for idx, x in enumerate(row) if ((idx%classNum) == (rowIdx%classNum))]).sum())
+                # diffVector = torch.tensor(diffVector).to(self._device())
+                # print(diffVector)
+
+                # HERE'S THIS, BUT WITH MASKING
+                diffVector = (D * classVarietyMask).sum(1)
+
+            else:
+                diffVector = torch.cdist(z, z).sum(1)
 
         # if no classes are selected yet, but they are needed for the "decoder-gates", select classes to be sampled
         if (y_used is None) and (self.dg_gates):
