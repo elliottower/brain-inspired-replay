@@ -82,6 +82,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
 
     '''
 
+    print("\nCurated multiplier: ", curated_multiplier)
     # Should convolutional layers be frozen?
     freeze_convE = (utils.checkattr(args, "freeze_convE") and hasattr(args, "depth") and args.depth>0)
 
@@ -327,12 +328,12 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         # Use the previous model to score the generated images (code taken from Trevor's softmax above)
                         with torch.no_grad():
                             curTaskID = task - 2
-                            newScores_og = model.classify(x_, not_hidden=False if Generative else True)
-                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))] # Logits that don't sum to 1
-                            newHardScores = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
-                            cross_entropy = nn.CrossEntropyLoss(reduction='none')
+                            newScores_og = model.classify(x_, not_hidden=False if Generative else True).to(device)
+                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))].to(device) # Logits that don't sum to 1
+                            newHardScores = nn.Softmax(dim=1)(newScores).to(device) # Makes the scores sum to 1 (probabilities)
+                            cross_entropy = nn.CrossEntropyLoss(reduction='none').to(device)
                             y_used = torch.tensor(y_used, dtype=torch.long).to(device)
-                            cross_entropy_loss = cross_entropy(newHardScores, y_used)
+                            cross_entropy_loss = cross_entropy(newHardScores, y_used).to(device)
 
                         # --- Copy the model and perform an update on just the new incoming data (no replayed data) ---
                         # This will lead to catastrophic forgetting, as it has no replays to prevent this from happening
@@ -348,9 +349,9 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                         # This can tell us how much the model 'forgets' each of these samples, we will replay the worst ones
                         with torch.no_grad():
                             curTaskID = task - 2
-                            newScores_og = model_tmp.classify(x_, not_hidden=False if Generative else True)
-                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 2))] # Logits that don't sum to 1
-                            newHardScores2 = nn.Softmax(dim=1)(newScores) # Makes the scores sum to 1 (probabilities)
+                            newScores_og = model_tmp.classify(x_, not_hidden=False if Generative else True).to(device)
+                            newScores = newScores_og[:, :(classes_per_task * (curTaskID + 2))].to(device) # Logits that don't sum to 1
+                            newHardScores2 = nn.Softmax(dim=1)(newScores).to(device) # Makes the scores sum to 1 (probabilities)
 
                             # --- Measure the difference in cross entropy loss for predictions before and after ---
                             if sample_method == 'curated' or sample_method == "curated_softmax":
@@ -363,17 +364,17 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
 
                             # TREVOR'S NEW METHOD - This tries to take into account the variety of the samples
                             elif sample_method == "curated_variety" or sample_method == "curated_classVariety":
-                                cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
-                                cross_entropy_loss2 = cross_entropy(newHardScores2, y_used)
+                                cross_entropy = nn.CrossEntropyLoss(reduction='none').to(device) # Per-example cross entropy (not avg)
+                                cross_entropy_loss2 = cross_entropy(newHardScores2, y_used).to(device)
 
                                 # Amount that the loss changes between the model updating
                                 diff = cross_entropy_loss2 - cross_entropy_loss
                                 
                                 # Softmaxing diff and the variety vector
-                                varietyWeight = 0.5
-                                diff_SM = nn.Softmax(dim=0)(diff)
-                                variety_SM = nn.Softmax(dim=0)(varietyVector)
-                                metric = ((1-varietyWeight) * diff_SM) + (varietyWeight * variety_SM)
+                                varietyWeight = torch.tensor((0.5)).to(device)
+                                diff_SM = nn.Softmax(dim=0)(diff).to(device)
+                                variety_SM = nn.Softmax(dim=0)(varietyVector).to(device)
+                                metric = ((1-varietyWeight) * diff_SM) + (varietyWeight * variety_SM).to(device)
 
                             # Multiply the misclassification error (cross entropy) by the amount that this changes between the model updating
                             # metric = cross_entropy_loss2 * diff
@@ -403,7 +404,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                 metric = newHardScores2[:, -1] + newHardScores2[:, -1]
 
                             # --- Sort based on some metric, then divide up by classes (afterwards) ---
-                            sorted, indices = torch.sort(metric, descending=True) # Descending order, pick first 100
+                            _, indices = torch.sort(metric, descending=True) # Descending order, pick first 100
 
                             # Shuffle indices around to test choosing from this larger pool of generated samples randomly
                             if sample_method == 'uniform_large' or sample_method == 'random_large':

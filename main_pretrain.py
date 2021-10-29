@@ -153,6 +153,13 @@ def run(args):
     #----- (PRE-)TRAINING -----#
     #--------------------------#
 
+    # Set random seeds
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if cuda:
+        torch.cuda.manual_seed(args.seed)
+    print("\nSetting random seeds for pre-training: ", args.seed)
+
     # (Pre)train model
     print("\nTraining...")
     train.train(cnn, train_loader, iters, loss_cbs=loss_cbs, eval_cbs=[eval_cb, latent_space_cb],

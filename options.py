@@ -230,7 +230,7 @@ def add_bir_options(parser, only_MNIST=False, compare_code="none", **kwargs):
     BIR.add_argument('--dg-type', type=str, metavar="TYPE", help="decoder-gates: based on tasks or classes?")
     if not compare_code in ('hyper', 'bir'):
         BIR.add_argument('--dg-prop', type=float, help="decoder-gates: masking-prop")
-    if compare_code in ('all'):
+    if compare_code in ('none'):
         BIR.add_argument('--dg-si-prop', type=float, metavar="PROP", help="decoder-gates: masking-prop for BI-R + SI")
         BIR.add_argument('--dg-c', type=float, metavar="C", help="SI hyperparameter for BI-R + SI")
     # -hidden replay

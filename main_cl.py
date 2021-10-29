@@ -303,7 +303,8 @@ def run(args, verbose=False):
                  eval_cbs=eval_cbs, sample_cbs=sample_cbs, generator=generator, gen_iters=g_iters,
                  gen_loss_cbs=generator_loss_cbs, feedback=utils.checkattr(args, 'feedback'),
                  reinit=utils.checkattr(args, 'reinit'), args=args, only_last=utils.checkattr(args, 'only_last'),
-                 sample_method=args.sample_method if hasattr(args, 'sample_method') else None)
+                 sample_method=args.sample_method if hasattr(args, 'sample_method') else None,
+                 curated_multiplier=args.curated_multiplier if hasattr(args, 'curated_multiplier') else None)
         # Save evaluation metrics measured throughout training
         file_name = "{}/dict-{}".format(args.r_dir, param_stamp)
         utils.save_object(precision_dict, file_name)
