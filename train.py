@@ -62,7 +62,7 @@ def train(model, train_loader, iters, loss_cbs=list(), eval_cbs=list(), save_eve
 def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=None, classes_per_task=None,
              iters=2000, batch_size=32, batch_size_replay=None, loss_cbs=list(), eval_cbs=list(), sample_cbs=list(),
              generator=None, gen_iters=0, gen_loss_cbs=list(), feedback=False, reinit=False, args=None, only_last=False,
-             sample_method='random', curated_multiplier=4):
+             sample_method='random', curated_multiplier=4, variety_weight=0.5):
     '''Train a model (with a "train_a_batch" method) on multiple tasks, with replay-strategy specified by [replay_mode].
 
     [model]             <nn.Module> main model to optimize across all tasks
@@ -79,6 +79,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
     [*_cbs]             <list> of call-back functions to evaluate training-progress
     [sample_method]     <str> indicating the sample method, choices: 'random', 'uniform', 'curated', 'softmax', 'interfered', 'misclassified'
     [curated_multiplier]<int> choose curated samples out of size curated_multiplier * mutiply batch_size_replay
+    [variety_weight]    <float> weight of variety loss as compared with regular loss
 
     '''
 
@@ -371,10 +372,10 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                 diff = cross_entropy_loss2 - cross_entropy_loss
                                 
                                 # Softmaxing diff and the variety vector
-                                varietyWeight = torch.tensor((0.5)).to(device)
+                                variety_eight = torch.tensor((variety_weight)).to(device)
                                 diff_SM = nn.Softmax(dim=0)(diff).to(device)
                                 variety_SM = nn.Softmax(dim=0)(varietyVector).to(device)
-                                metric = ((1-varietyWeight) * diff_SM) + (varietyWeight * variety_SM).to(device)
+                                metric = ((1-variety_weight) * diff_SM) + (variety_weight * variety_SM).to(device)
 
                             # Multiply the misclassification error (cross entropy) by the amount that this changes between the model updating
                             # metric = cross_entropy_loss2 * diff

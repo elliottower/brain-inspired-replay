@@ -202,6 +202,7 @@ def add_replay_options(parser, only_MNIST=False, compare_code="none", **kwargs):
     sample_choices = ['random', 'uniform', 'curated', 'softmax', 'interfered', 'misclassified', 'random_large', 'uniform_large', 'curated_variety', 'curated_softmax', "curated_classVariety"]
     replay.add_argument('--sample_method', type=str, default='random', choices=sample_choices, help="sampling method for choosing samples, choices: 'random', 'uniform', 'curated'")
     replay.add_argument('--curated_multiplier', type=int, default=4, help="choose curated samples out of size curated_multiplier * mutiply batch_size_replay")
+    replay.add_argument('--variety_weight', type=float, default=0.5, help="weight of variety loss as compared with regular loss, must be between 0-1")
     # -add VAE-specific parameters
     if compare_code in ("none"):
         parser = add_VAE_options(parser, only_MNIST=only_MNIST)
