@@ -84,6 +84,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
     '''
 
     print("\nCurated multiplier: ", curated_multiplier)
+    print("\nVariety weight: ", variety_weight)
     # Should convolutional layers be frozen?
     freeze_convE = (utils.checkattr(args, "freeze_convE") and hasattr(args, "depth") and args.depth>0)
 
