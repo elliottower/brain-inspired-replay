@@ -62,7 +62,7 @@ def train(model, train_loader, iters, loss_cbs=list(), eval_cbs=list(), save_eve
 def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=None, classes_per_task=None,
              iters=2000, batch_size=32, batch_size_replay=None, loss_cbs=list(), eval_cbs=list(), sample_cbs=list(),
              generator=None, gen_iters=0, gen_loss_cbs=list(), feedback=False, reinit=False, args=None, only_last=False,
-             sample_method='random', curated_multiplier=4, variety_weight=0.5, mir_coef=1):
+             sample_method='random', curated_multiplier=4, variety_weight=0.5, mir_coef=0.1):
     '''Train a model (with a "train_a_batch" method) on multiple tasks, with replay-strategy specified by [replay_mode].
 
     [model]             <nn.Module> main model to optimize across all tasks
@@ -86,6 +86,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
 
     print("\nCurated multiplier: ", curated_multiplier)
     print("\nVariety weight: ", variety_weight)
+    print("\nMIR coefficient: ", mir_coef)
     # Should convolutional layers be frozen?
     freeze_convE = (utils.checkattr(args, "freeze_convE") and hasattr(args, "depth") and args.depth>0)
 

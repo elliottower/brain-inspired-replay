@@ -305,7 +305,8 @@ def run(args, verbose=False):
                  reinit=utils.checkattr(args, 'reinit'), args=args, only_last=utils.checkattr(args, 'only_last'),
                  sample_method=args.sample_method if hasattr(args, 'sample_method') else None,
                  curated_multiplier=args.curated_multiplier if hasattr(args, 'curated_multiplier') else None,
-                 variety_weight=args.variety_weight if hasattr(args, 'variety_weight') else None
+                 variety_weight=args.variety_weight if hasattr(args, 'variety_weight') else None,
+                 mir_coef=args.mir_coef if hasattr(args, 'mir_coef') else None
                  )
         # Save evaluation metrics measured throughout training
         file_name = "{}/dict-{}".format(args.r_dir, param_stamp)

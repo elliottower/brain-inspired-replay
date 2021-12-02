@@ -203,6 +203,7 @@ def add_replay_options(parser, only_MNIST=False, compare_code="none", **kwargs):
     replay.add_argument('--sample_method', type=str, default='random', choices=sample_choices, help="sampling method for choosing samples, choices: 'random', 'uniform', 'curated'")
     replay.add_argument('--curated_multiplier', type=int, default=4, help="choose curated samples out of size curated_multiplier * mutiply batch_size_replay")
     replay.add_argument('--variety_weight', type=float, default=0.5, help="weight of variety loss as compared with regular loss, must be between 0-1")
+    replay.add_argument('--mir_coef', type=float, default=0.1, help="weight of pre-update cross entropy loss in MIR loss equation (alpha from paper)")
     # -add VAE-specific parameters
     if compare_code in ("none"):
         parser = add_VAE_options(parser, only_MNIST=only_MNIST)
