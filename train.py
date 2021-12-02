@@ -62,7 +62,7 @@ def train(model, train_loader, iters, loss_cbs=list(), eval_cbs=list(), save_eve
 def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=None, classes_per_task=None,
              iters=2000, batch_size=32, batch_size_replay=None, loss_cbs=list(), eval_cbs=list(), sample_cbs=list(),
              generator=None, gen_iters=0, gen_loss_cbs=list(), feedback=False, reinit=False, args=None, only_last=False,
-             sample_method='random', curated_multiplier=4, variety_weight=0.5):
+             sample_method='random', curated_multiplier=4, variety_weight=0.5, mir_coef=1):
     '''Train a model (with a "train_a_batch" method) on multiple tasks, with replay-strategy specified by [replay_mode].
 
     [model]             <nn.Module> main model to optimize across all tasks
@@ -80,6 +80,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
     [sample_method]     <str> indicating the sample method, choices: 'random', 'uniform', 'curated', 'softmax', 'interfered', 'misclassified'
     [curated_multiplier]<int> choose curated samples out of size curated_multiplier * mutiply batch_size_replay
     [variety_weight]    <float> weight of variety loss as compared with regular loss
+    [mir_coef]          <float> weight of previous model's cross entropy score for generated sample (encourages samples which the prior model is confident about)
 
     '''
 
@@ -264,8 +265,8 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                                                    not_hidden=False if Generative else True)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))]
                             softmax = torch.nn.Softmax(dim=1)
-                            newHardScores = nn.Softmax(dim=1)(newScores)
-                            avgError = torch.mean(newHardScores, dim=0)
+                            scores_old = nn.Softmax(dim=1)(newScores)
+                            avgError = torch.mean(scores_old, dim=0)
                             sampleProbs = torch.zeros(newScores_og.shape[1])
                             sampleProbs[:(classes_per_task * (curTaskID + 1))] = avgError[
                                                                                  :(classes_per_task * (curTaskID + 1))]
@@ -287,7 +288,7 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                     # --- Uniform sample curation: pick the best samples to show (by some metric), balance uniformly ---
                     else:
 
-                        if (sample_method == "curated_variety"):
+                        if (sample_method == "curated_variety" or sample_method == "interfered"):
                             # Generate x times as many samples as we need to then pick the best of
                             x_, y_used, task_used, varietyVector = previous_generator.sample(
                                 batch_size_replay * curated_multiplier, allowed_classes=allowed_classes, allowed_domains=allowed_domains,
@@ -308,8 +309,8 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                                                                        not_hidden=False if Generative else True)
                                 newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))]
                                 softmax = torch.nn.Softmax(dim=1)
-                                newHardScores = nn.Softmax(dim=1)(newScores)
-                                avgError = torch.mean(newHardScores, dim=0)
+                                scores_old = nn.Softmax(dim=1)(newScores)
+                                avgError = torch.mean(scores_old, dim=0)
                                 sampleProbs = torch.zeros(newScores_og.shape[1])
                                 sampleProbs[:(classes_per_task * (curTaskID + 1))] = avgError[
                                                                                      :(classes_per_task * (curTaskID + 1))]
@@ -332,10 +333,10 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             curTaskID = task - 2
                             newScores_og = model.classify(x_, not_hidden=False if Generative else True).to(device)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 1))].to(device) # Logits that don't sum to 1
-                            newHardScores = nn.Softmax(dim=1)(newScores).to(device) # Makes the scores sum to 1 (probabilities)
+                            scores_old = nn.Softmax(dim=1)(newScores).to(device) # Makes the scores sum to 1 (probabilities)
                             cross_entropy = nn.CrossEntropyLoss(reduction='none').to(device)
                             y_used = torch.tensor(y_used, dtype=torch.long).to(device)
-                            cross_entropy_loss = cross_entropy(newHardScores, y_used).to(device)
+                            loss_old = cross_entropy(scores_old, y_used).to(device)
 
                         # --- Copy the model and perform an update on just the new incoming data (no replayed data) ---
                         # This will lead to catastrophic forgetting, as it has no replays to prevent this from happening
@@ -353,57 +354,55 @@ def train_cl(model, train_datasets, replay_mode="none", scenario="task", rnt=Non
                             curTaskID = task - 2
                             newScores_og = model_tmp.classify(x_, not_hidden=False if Generative else True).to(device)
                             newScores = newScores_og[:, :(classes_per_task * (curTaskID + 2))].to(device) # Logits that don't sum to 1
-                            newHardScores2 = nn.Softmax(dim=1)(newScores).to(device) # Makes the scores sum to 1 (probabilities)
+                            scores_new = nn.Softmax(dim=1)(newScores).to(device) # Makes the scores sum to 1 (probabilities)
 
                             # --- Measure the difference in cross entropy loss for predictions before and after ---
                             if sample_method == 'curated' or sample_method == "curated_softmax":
                                 cross_entropy = nn.CrossEntropyLoss(reduction='none') # Per-example cross entropy (not avg)
-                                cross_entropy_loss2 = cross_entropy(newHardScores2, y_used)
+                                loss_new = cross_entropy(scores_new, y_used)
 
                                 # Amount that the loss changes between the model updating
-                                diff = cross_entropy_loss2 - cross_entropy_loss
+                                diff = loss_new - loss_old
                                 metric = diff
 
                             # TREVOR'S NEW METHOD - This tries to take into account the variety of the samples
                             elif sample_method == "curated_variety" or sample_method == "curated_classVariety":
                                 cross_entropy = nn.CrossEntropyLoss(reduction='none').to(device) # Per-example cross entropy (not avg)
-                                cross_entropy_loss2 = cross_entropy(newHardScores2, y_used).to(device)
+                                loss_new = cross_entropy(scores_new, y_used).to(device)
 
                                 # Amount that the loss changes between the model updating
-                                diff = cross_entropy_loss2 - cross_entropy_loss
+                                diff = loss_new - loss_old
                                 
-                                # Softmaxing diff and the variety vector
-                                variety_eight = torch.tensor((variety_weight)).to(device)
-                                diff_SM = nn.Softmax(dim=0)(diff).to(device)
-                                variety_SM = nn.Softmax(dim=0)(varietyVector).to(device)
-                                metric = ((1-variety_weight) * diff_SM) + (variety_weight * variety_SM).to(device)
+                                # Softmaxing diff and the variety vector (to get probabilities)
+                                variety_weight = torch.tensor((variety_weight)).to(device)
+                                diff_softmax = nn.Softmax(dim=0)(diff).to(device)
+                                variety_softmax = nn.Softmax(dim=0)(varietyVector).to(device)
+                                metric = ((1-variety_weight) * diff_softmax) + (variety_weight * variety_softmax).to(device)
 
                             # Multiply the misclassification error (cross entropy) by the amount that this changes between the model updating
-                            # metric = cross_entropy_loss2 * diff
+                            # metric = loss_new * diff
 
                             # --- Measure KL Divergence between predictions before and predictions afterwards ---
                             # Maximally Interfered Retrieval uses a linear combination of KL, entropy, and 'variance'
                             # This ensures the samples are not too close together, but we do not currently measure that
                             elif sample_method == 'interfered':
-                                KLDiv = nn.KLDivLoss(reduction='none')(newHardScores, newHardScores2)
-                                print(KLDiv.shape)
-                                print(cross_entropy_loss.shape)
+                                # First, pad with zeros so predictions match (previous model predicts zero score for all new classes)
+                                padded_scores = torch.zeros_like(scores_new)
+                                padded_scores[:, :scores_old.size(1)] = scores_old
+                                kl_div = nn.KLDivLoss(reduction='none')(padded_scores, scores_new)
+                                kl_div = torch.mean(kl_div, dim=1)
+                                variety_softmax = nn.Softmax(dim=0)(varietyVector).to(device)
 
-                                # Test code to compute KL divergence for every example individually, above code is (512, 2) rather than (512, 1) for some reason
-                                #KLDiv = [ nn.KLDivLoss()(newHardScores[i], newHardScores2[i]) for i in range(len(newHardScores))]
-
-                                # Note from Trevor: When I tried to run this method, there was a size mismatch. 
-                                # KLDiv.shape = (1024, 10), whereas cross_entropy_loss.shape = (1024,), and it said
-                                # that they needed to be equal on dim 1. Sooo: I tried to just transpose the KLDiv matrix, 
-                                # and it worked. Honestly, I'm too tired to try and decipher what I did mathematically lol
-                                metric = torch.tensor(KLDiv.T) - 0 * cross_entropy_loss
+                                # Calculate MIR loss and balance with variety (instead of explicitly searching, maximize both variety and MIR loss)
+                                mir_loss = kl_div - mir_coef * loss_old
+                                metric = (1-variety_weight) * (mir_loss) + variety_weight * variety_softmax
 
                             # --- New idea: use the examples which the new model misclassifies the most as one of the new classes
                             # This the opposite approach to softmax, where softmax takes the current model and calculates
                             # Which classes does it confuse the new data for the most, this trains on the new data and then
                             # Tries to find generated examples which it confuses for the new data classes the most
                             elif sample_method == 'misclassified' or sample_method == 'uniform_large' or sample_method == 'random_large':
-                                metric = newHardScores2[:, -1] + newHardScores2[:, -1]
+                                metric = scores_new[:, -1] + scores_new[:, -1]
 
                             # --- Sort based on some metric, then divide up by classes (afterwards) ---
                             _, indices = torch.sort(metric, descending=True) # Descending order, pick first 100
