@@ -1,5 +1,5 @@
 # Selective Replay + BI-R
-This repository implements selective replay inspired by Maximally Interfered Retrieval (https://arxiv.org/abs/1908.04742)
+This repository implements selective replay inspired by [Maximally Interfered Retrieval](https://arxiv.org/abs/1908.04742)
 
 Paper: [PDF](https://github.com/elliottower/brain-inspired-replay/blob/master/Selective_Replay_BI-R.pdf) 
 
