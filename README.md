@@ -1,3 +1,10 @@
+# Selective Replay + BI-R
+This repository implements selective replay inspired by Maximally Interfered Retrieval (https://arxiv.org/abs/1908.04742)
+
+Paper: [PDF](https://github.com/elliottower/brain-inspired-replay/blob/master/Selective_Replay_BI-R.pdf) 
+
+---
+
 # Brain-Inspired Replay
 A PyTorch implementation of the continual learning experiments with deep neural networks described in the 
 following paper:
