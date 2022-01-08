@@ -5,15 +5,18 @@ Paper: [PDF](https://github.com/elliottower/brain-inspired-replay/blob/master/Se
 
 ## Installation
 
-Run the following commands to create a virtual environment and install the required packages
+Run the following commands to create a virtual environment and install the required packages.
+
+Using conda:
 
 ```conda create -n replay python=3.6```
 
 ```conda activate replay```
 
-```conda install pytorch==1.2.0 torchvision=0.4.0  -c pytorch```
+```conda install pytorch==1.2.0 torchvision==0.4.0  -c pytorch```
 
 ```pip install -r requirements.txt```
+
 
 ---
 
